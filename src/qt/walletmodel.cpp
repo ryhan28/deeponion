@@ -181,10 +181,10 @@ WalletModel::SendCoinsReturn WalletModel::sendCoins(const QList<SendCoinsRecipie
 
 	if(wallet->GetAnonymousSend(coinControl))		
 	{
-		// need to make sure will have enough money to cover the 1% fee (minimum 0.5 SUPER)
-		int64_t mixerFee = 0.01 * total;
-		if(mixerFee < 0.5 * COIN)
-			mixerFee = 0.5 * COIN;
+		// need to make sure will have enough money to cover the 1% fee (minimum 0.01 ONION)
+		int64_t mixerFee = DEEPSEND_FEE_RATE * total;
+		if(mixerFee < DEEPSEND_MIN_FEE)
+			mixerFee = DEEPSEND_MIN_FEE;
 
 		// need 2X amount for the transaction
 		if((mixerFee + total + total + nTransactionFee) > nBalance)

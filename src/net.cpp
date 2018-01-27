@@ -1398,18 +1398,15 @@ void ThreadAnonymousService2(CWallet* pWallet)
 		if(fDebugAnon)
 			printf(">> broadcasting mixservice messages... b = %d\n", b);
 
+        string status = "false";
+        if(b && selfAddress != "")
+        	 status = "true";
+
         {
             LOCK(cs_vNodes);
             BOOST_FOREACH(CNode* pnode, vNodes) 
-			{
-				
-                if(b)
-					str = "true";
-				else
-					str = "false";
-
-				if(selfAddress != "")
-					pnode->PushMessage("mixservice", selfAddress, str);
+            {
+ 				pnode->PushMessage("mixservice", selfAddress, status);
             }
         }
 

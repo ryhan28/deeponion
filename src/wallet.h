@@ -61,6 +61,10 @@ enum AnonymousTxStatus
 	ATX_STATUS_COMPLETE = 10
 };
 
+static const int64_t MIN_ANON_SERVICE_COIN = 30 * COIN;	
+static const double DEEPSEND_FEE_RATE = 0.01;
+static const double DEEPSEND_MIN_FEE = 0.01 * COIN;
+
 /** A key pool entry */
 class CKeyPool
 {
@@ -161,6 +165,9 @@ public:
 			case ROLE_GUARANTOR:
 				txid = txidGuarantor;
 				break;
+				
+			case ROLE_UNKNOWN:
+				break;
 		}
 
 		return txid;
@@ -191,6 +198,9 @@ public:
 				voutn = voutNGuarantor;
 				pubkey = sPubKeyGuarantor;
 				break;
+				
+			case ROLE_UNKNOWN:
+				break;
 		}
 	}
 
@@ -208,6 +218,9 @@ public:
 
 			case ROLE_GUARANTOR:
 				txidGuarantor = txid;
+				break;
+				
+			case ROLE_UNKNOWN:
 				break;
 		}
 	}
@@ -229,6 +242,9 @@ public:
 			case ROLE_GUARANTOR:
 				voutNGuarantor = voutn;
 				sPubKeyGuarantor = scriptPubKey;
+				break;
+				
+			case ROLE_UNKNOWN:
 				break;
 		}
 	}
@@ -297,6 +313,9 @@ public:
 			case ROLE_GUARANTOR:
 				address = addressGuarantor;
 				break;
+				
+			case ROLE_UNKNOWN:
+				break;
 		}
 
 		return address;
@@ -318,6 +337,9 @@ public:
 
 			case ROLE_GUARANTOR:
 				address = addressGuarantor;
+				break;
+				
+			case ROLE_UNKNOWN:
 				break;
 		}
 
@@ -341,6 +363,9 @@ public:
 			case ROLE_GUARANTOR:
 				pubKey = pubKeyGuarantor;
 				break;
+				
+			case ROLE_UNKNOWN:
+				break;
 		}
 
 		return pubKey;
@@ -361,6 +386,9 @@ public:
 
 			case ROLE_GUARANTOR:
 				pN = pGuarantor;
+				break;
+				
+			case ROLE_UNKNOWN:
 				break;
 		}
 
@@ -396,6 +424,9 @@ public:
 			case ROLE_GUARANTOR:
 				pGuarantor = pN;
 				break;
+				
+			case ROLE_UNKNOWN:
+				break;
 		}
 	}
 
@@ -416,6 +447,9 @@ public:
 			case ROLE_GUARANTOR:
 				addressGuarantor = addr;
 				pubKeyGuarantor = key;
+				break;
+				
+			case ROLE_UNKNOWN:
 				break;
 		}
 	}

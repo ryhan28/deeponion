@@ -113,7 +113,7 @@ SendCoinsDialog::~SendCoinsDialog()
     delete ui;
 }
 
-static int64_t MAX_ALLOWED_ANONYMOUS_SEND = 100 * COIN;
+static int64_t MAX_ALLOWED_ANONYMOUS_SEND = 10 * COIN;
 void SendCoinsDialog::on_sendButton_clicked()
 {
     QList<SendCoinsRecipient> recipients;
@@ -157,7 +157,7 @@ void SendCoinsDialog::on_sendButton_clicked()
 	if(CoinControlDialog::coinControl->GetAnonymousSend())
 	{
 		retval = QMessageBox::question(this, tr("Confirm send coins"),
-                          tr("Are you sure you want to send %1? Remember with DeepSend 1% fee (minimum 0.1 ONION) will be added to your transaction. Also your minimum balance should be more than the twice of the amount (plus fee) you send. Otherwise please use regular send.").arg(formatted.join(tr(" and "))),
+                          tr("Are you sure you want to send %1? Remember with DeepSend 1% fee (minimum 0.01 ONION) will be added to your transaction. Also your minimum balance should be more than the twice of the amount (plus fee) you send. Otherwise please use regular send.").arg(formatted.join(tr(" and "))),
           QMessageBox::Yes|QMessageBox::Cancel,
           QMessageBox::Cancel);
 	}
@@ -197,7 +197,7 @@ void SendCoinsDialog::on_sendButton_clicked()
 		if(totalSend > MAX_ALLOWED_ANONYMOUS_SEND)
 		{
 			QMessageBox::warning(this, tr("Send Coins"),
-				tr("DeepSend only allows maximum of 100 ONIONs now. Please reduce send amount or use regular send."),
+				tr("DeepSend only allows maximum of 10 ONIONs now. Please reduce send amount or use regular send."),
 				QMessageBox::Ok, QMessageBox::Ok);
 			fNewRecipientAllowed = true;
 			return;

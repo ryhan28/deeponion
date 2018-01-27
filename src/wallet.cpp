@@ -20,8 +20,6 @@ extern unsigned int nStakeMaxAge;
 unsigned int nStakeSplitAge = 20 * 24 * 60 * 60;
 int64_t nStakeCombineThreshold = 100 * COIN;
 
-static const int64_t MIN_ANON_SERVICE_COIN = 500 * COIN;	
-
 
 //////////////////////////////////////////////////////////////////////////////
 //
