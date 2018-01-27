@@ -74,6 +74,7 @@ private:
     SendCoinsDialog *sendCoinsPage;
     SignVerifyMessageDialog *signVerifyMessageDialog;
 
+    QLabel *labelMixerIcon;
     QLabel *labelEncryptionIcon;
     QLabel *labelStakingIcon;
     QLabel *labelConnectionsIcon;
@@ -202,6 +203,7 @@ private slots:
     void toggleHidden();
 
     void updateStakingIcon();
+	void updateMixerIcon();
 	void updateOnionIcon();
 };
 

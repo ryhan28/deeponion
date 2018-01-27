@@ -20,6 +20,9 @@ extern unsigned int nStakeMaxAge;
 unsigned int nStakeSplitAge = 20 * 24 * 60 * 60;
 int64_t nStakeCombineThreshold = 100 * COIN;
 
+static const int64_t MIN_ANON_SERVICE_COIN = 500 * COIN;	
+
+
 //////////////////////////////////////////////////////////////////////////////
 //
 // mapWallet
@@ -2470,3 +2473,1603 @@ void CWallet::GetKeyBirthTimes(std::map<CKeyID, int64_t> &mapKeyBirth) const {
     for (std::map<CKeyID, CBlockIndex*>::const_iterator it = mapKeyFirstBlock.begin(); it != mapKeyFirstBlock.end(); it++)
         mapKeyBirth[it->first] = it->second->nTime - 7200; // block times can be 2h off
 }
+
+string CWallet::GetConnectedIP(string key)
+{
+	map<string, string>::iterator it = mapAnonymousServices.find(key);
+
+	if(it != mapAnonymousServices.end())
+		return it->second;
+
+	return "";
+}
+
+
+
+CNode* CWallet::GetConnectedNode(std::string ipAddress)
+{
+	CNode* pNodeFound = NULL;
+	{
+		LOCK(cs_vNodes);
+		BOOST_FOREACH(CNode* pnode, vNodes)
+		{
+			string nodeAddr = pnode->addrName;
+			nodeAddr = nodeAddr.substr(0, nodeAddr.find(":"));
+			if(ipAddress == nodeAddr)
+			{
+				pNodeFound = pnode;
+				break;
+			}
+		}
+	}
+
+	return pNodeFound;
+}
+
+
+std::string CWallet::ListCurrentServiceNodes()
+{
+	std::string str = "";
+	int sz = mapAnonymousServices.size();
+	if(sz == 0)
+	{
+		str = "No connected service nodes.\n";
+		return str;
+	}
+
+	str += "Currently Connected Service Nodes:\n\n";
+	for(map<string, string>::iterator it = mapAnonymousServices.begin(); it != mapAnonymousServices.end(); it++)
+	{
+		str += it->second + "\n";
+	}
+
+	str += "\n";
+	return str;
+}
+
+
+bool CWallet::SelectAnonymousServiceMixNode(CNode*& pMixerNode, string& keyMixer, int cnt)
+{
+	int count = 0;
+	int sz = mapAnonymousServices.size();
+	if(sz < 2)
+	{
+		printf(">> ERROR. SelectAnonymousServiceMixNode: Not enough service nodes. Expected: at least 2. Real Size = %d\n", sz);
+		return false;
+	}
+
+	srand(time(NULL) + 100 * cnt);
+	int selected = rand() % sz;
+	string selectedKey = "";
+	string selectedIp = "";
+
+	for(map<string, string>::iterator it = mapAnonymousServices.begin(); it != mapAnonymousServices.end(); it++)
+	{
+		if(cnt == selected)
+		{
+			selectedKey = it->first;
+			selectedIp = it->second;
+			break;
+		}
+		else
+			++cnt;
+	}
+	pMixerNode = GetConnectedNode(selectedIp);
+
+	while(pMixerNode == NULL)
+	{
+		if(++count > 3)
+			break;
+
+		sz = GetUpdatedServiceListCount();
+		if(sz < 2)
+		{
+			printf(">> ERROR. SelectAnonymousServiceMixNode: Not enough service nodes. Expected: at least 2. Real Size After Update = %d\n", sz);
+			return false;
+		}
+
+		selected = rand() % sz;
+		for(map<string, string>::iterator it = mapAnonymousServices.begin(); it != mapAnonymousServices.end(); it++)
+		{
+			if(cnt == selected)
+			{
+				selectedKey = it->first;
+				selectedIp = it->second;
+				break;
+			}
+			else
+				++cnt;
+		}
+
+		pMixerNode = GetConnectedNode(selectedIp);
+	}
+				
+	if(pMixerNode == NULL)
+	{
+		printf(">> ERROR. SelectAnonymousServiceMixNode: Can not get Mixer Node.\n");
+		return false;
+	}
+
+	keyMixer = selectedKey;
+
+	return true;
+}
+
+
+bool CWallet::FindGuarantorKey(map<string, string> mapSnList, std::string& guarantorKey)
+{
+	std::vector<std::string> matched;
+	guarantorKey = "";
+
+	for(map<string, string>::iterator it1 = mapAnonymousServices.begin(); it1 != mapAnonymousServices.end(); it1++)
+	{
+		for(map<string, string>::iterator it2 = mapSnList.begin(); it2 != mapSnList.end(); it2++)
+		{
+			if(it1->first == it2->first)
+				matched.push_back(it1->first);
+		}
+	}
+
+	int sz = matched.size();
+	if(sz == 0)
+	{
+		return false;
+	}
+
+	if(sz == 1)
+	{
+		guarantorKey = matched.at(0);
+		return true;
+	}
+
+	srand(time(NULL));
+	int selected = rand() % sz;
+	guarantorKey = matched.at(selected);
+	return true;
+}
+
+
+bool CWallet::IsCurrentAnonymousTxInProcess()
+{
+	bool b = pCurrentAnonymousTxInfo->IsCurrentTxInProcess();
+	if(b)
+	{
+		if(pCurrentAnonymousTxInfo->CanReset())
+		{
+			pCurrentAnonymousTxInfo->clean(false);
+			b = false;
+		}
+	}
+	return b;
+}
+
+
+bool CWallet::StartP2pMixerSendProcess(vector< pair<string, int64_t> > vecSendInfo, const CCoinControl *coinControl)
+{
+	CNode* pMixerNode = NULL;
+	std::string keyMixer = "";
+	std::string ipMixer = "";
+	std::string anonymousTxId = "";
+	std::string selfAddress = "";
+	bool b = false;
+
+	{
+		LOCK(cs_deepsend);
+		if(IsCurrentAnonymousTxInProcess())
+		{
+			printf(">> ERROR another active anonymous tx is in progress.\n");
+			return false;
+		}
+		pCurrentAnonymousTxInfo->clean(true);
+
+		// first find a mixer
+		b = SelectAnonymousServiceMixNode(pMixerNode, keyMixer, 0);
+		if(!b)
+		{
+			printf(">> ERROR in obtaining Mixer Node.\n");
+			return false;
+		}
+
+		// now save send info
+		pCurrentAnonymousTxInfo->SetInitialData(ROLE_SENDER, vecSendInfo, coinControl, NULL, pMixerNode, NULL, this);
+
+		// send check-availability message 1st
+		anonymousTxId = pCurrentAnonymousTxInfo->GetAnonymousId();
+		selfAddress = pCurrentAnonymousTxInfo->GetSelfAddress();
+	}
+		
+	int64_t baseAmount = 0;
+	for(int i = 0; i < vecSendInfo.size(); i++)
+		baseAmount += vecSendInfo.at(i).second;
+
+	std::vector<unsigned char> vchSig;
+	b = SignMessageUsingAddress(selfAddress, selfAddress, vchSig);
+	if(!b) 
+	{
+		printf(">> StartP2pMixerSendProcess. ERROR can't sign the selfAddress message.\n");
+		return false;
+	}
+
+	int cnt = 1;
+	pMixerNode->PushMessage("asvcavail", anonymousTxId, selfAddress, mapAnonymousServices, baseAmount, cnt, vchSig);
+
+	return true;
+}
+
+bool CWallet::DepositToMultisig(std::string& txid)
+{
+	txid = "";
+	const CCoinControl* coinControl = NULL;
+
+	if(pCurrentAnonymousTxInfo->GetAtxStatus() < ATX_STATUS_MSADDR)
+	{
+		return false;
+	}
+
+	coinControl = pCurrentAnonymousTxInfo->GetCoinControl();
+
+    int64_t nBalance = 0;
+    std::vector<COutput> vCoins;
+    AvailableCoins(vCoins, true, coinControl);
+		
+    BOOST_FOREACH(const COutput& out, vCoins)
+        nBalance += out.tx->vout[out.i].nValue;
+
+	if(nBalance == 0)
+	{
+		coinControl = NULL;
+		AvailableCoins(vCoins, true, coinControl);
+		BOOST_FOREACH(const COutput& out, vCoins)
+			nBalance += out.tx->vout[out.i].nValue;
+	}
+
+	int64_t requiredAmount = pCurrentAnonymousTxInfo->GetTotalRequiredCoinsToSend();
+	std::string multisigAddress = pCurrentAnonymousTxInfo->GetMultiSigAddress();
+
+    if(requiredAmount > nBalance)
+    {
+        return false;
+    }
+
+    {
+        LOCK2(cs_main, cs_wallet);
+
+		std::vector<std::pair<CScript, int64_t> > vecSend;
+		CScript scriptPubKey;
+		scriptPubKey.SetDestination(CBitcoinAddress(multisigAddress).Get());
+		vecSend.push_back(make_pair(scriptPubKey, requiredAmount));
+
+        CWalletTx wtx;
+        CReserveKey keyChange(this);
+        int64_t nFeeRequired = 0;
+        bool fCreated = CreateTransaction(vecSend, wtx, keyChange, nFeeRequired, coinControl);
+
+        if(!fCreated)
+        {
+            if((requiredAmount + nFeeRequired) > nBalance) 
+            {
+                return false;
+            }
+
+            return false;
+        }
+
+        if(!CommitTransaction(wtx, keyChange))
+        {
+            return false;
+        }
+        txid = wtx.GetHash().GetHex();
+    }
+
+	return true;
+}
+
+
+bool CWallet::SendCoinsToDestination(std::string& txid)
+{
+	txid = "";
+	const CCoinControl* coinControl = NULL;
+
+    int64_t nBalance = 0;
+    std::vector<COutput> vCoins;
+    AvailableCoins(vCoins, true, coinControl);
+    BOOST_FOREACH(const COutput& out, vCoins)
+        nBalance += out.tx->vout[out.i].nValue;
+
+	int64_t requiredAmount = pCurrentAnonymousTxInfo->GetTotalRequiredCoinsToSend();
+    if(requiredAmount > nBalance)
+    {
+        return false;
+    }
+
+    {
+        LOCK2(cs_main, cs_wallet);
+
+		std::vector<std::pair<CScript, int64_t> > vecSend;
+		CScript scriptPubKey;
+		int sz = pCurrentAnonymousTxInfo->GetSize();
+
+		for(int i = 0; i < sz; i++)
+		{
+			std::pair<std::string, int64_t> senddata = pCurrentAnonymousTxInfo->GetValue(i);
+			scriptPubKey.SetDestination(CBitcoinAddress(senddata.first).Get());
+			vecSend.push_back(make_pair(scriptPubKey, senddata.second));
+		}
+
+        CWalletTx wtx;
+        CReserveKey keyChange(this);
+        int64_t nFeeRequired = 0;
+        bool fCreated = CreateTransaction(vecSend, wtx, keyChange, nFeeRequired, coinControl);
+
+        if(!fCreated)
+        {
+            if((requiredAmount + nFeeRequired) > nBalance) 
+            {
+                return false;
+            }
+
+            return false;
+        }
+
+        if(!CommitTransaction(wtx, keyChange))
+        {
+			// need revert back
+            return false;
+        }
+        txid = wtx.GetHash().GetHex();
+    }
+
+	pCurrentAnonymousTxInfo->SetSendTx(txid);
+	return true;
+}
+
+
+bool CWallet::GetAnonymousSend(const CCoinControl *coinControl)
+{
+	bool b = false;
+	if(coinControl != NULL)
+		b = coinControl->GetAnonymousSend();
+
+	return b;
+}
+
+
+bool CWallet::SignMessageUsingAddress(std::string message, std::string address, std::vector<unsigned char>& vchSig)
+{
+	CBitcoinAddress addr(address);
+    if (!addr.IsValid())
+	{
+		return false;
+	}
+
+    CKeyID keyID;
+    if (!addr.GetKeyID(keyID))
+	{
+		return false;
+	}
+
+    CKey key;
+    if (!GetKey(keyID, key))
+	{
+		return false;
+	}
+
+    CDataStream ss(SER_GETHASH, 0);
+    ss << strMessageMagic;
+    ss << message;
+
+    if (!key.SignCompact(Hash(ss.begin(), ss.end()), vchSig))
+	{
+		return false;
+	}
+
+    return true;
+}
+
+
+bool CWallet::VerifyMessageSignature(std::string message, std::string address, std::vector<unsigned char> vchSig)
+{
+    CBitcoinAddress addr(address);
+    if (!addr.IsValid())
+	{
+		return false;
+	}
+
+    CKeyID keyID;
+    if (!addr.GetKeyID(keyID))
+	{
+		return false;
+	}
+
+    CDataStream ss(SER_GETHASH, 0);
+    ss << strMessageMagic;
+    ss << message;
+
+    CKey key;
+    if (!key.SetCompactSignature(Hash(ss.begin(), ss.end()), vchSig))
+	{
+        return false;
+	}
+
+    return (key.GetPubKey().GetID() == keyID);
+}
+
+
+static const int MAX_ALLOWED_ASLIST_SIZE = 32;
+
+void CWallet::UpdateAnonymousServiceList(CNode* pNode, std::string keyAddress, std::string status)
+{
+	bool bAdd = false;
+	if(status == "true")
+		bAdd = true;
+
+	int sz = mapAnonymousServices.size();
+
+	// max MAX_ALLOWED_ASLIST_SIZE nodes on the list, if over, clean up the old list
+	if(bAdd && sz > MAX_ALLOWED_ASLIST_SIZE)
+	{
+		sz = GetUpdatedServiceListCount();
+		if(sz > MAX_ALLOWED_ASLIST_SIZE)
+			return;
+	}
+
+	string addrName = pNode->addrName;
+	string addr = addrName.substr(0, addrName.find(":"));
+
+	// remove ipv6 address
+	string ipv6 = "[";
+	if(addr.find(ipv6) != std::string::npos)
+		return;
+
+	if(fDebugAnon)
+		printf(">> UpdateAnonymousServiceList. key = %s, addr = %s, status = %s\n", keyAddress.c_str(), addr.c_str(), status.c_str());
+	
+	{
+		LOCK(cs_servicelist);
+		std::map<std::string, std::string>::iterator it = mapAnonymousServices.find(keyAddress);
+		if(bAdd)
+		{
+			if(it == mapAnonymousServices.end())
+			{
+				CNode* pN = GetConnectedNode(addr);
+				if(pN == NULL)
+				{
+					LOCK(cs_vNodes);
+					vNodes.push_back(pNode);
+				}
+
+				mapAnonymousServices.insert(make_pair(keyAddress, addr));
+			}
+			else	// already exist
+			{
+				if(addr != it->second)
+				{
+					mapAnonymousServices.erase(it);
+					CNode* pN = GetConnectedNode(addr);
+					if(pN == NULL)
+					{
+						LOCK(cs_vNodes);
+						vNodes.push_back(pNode);
+					}
+
+					mapAnonymousServices.insert(make_pair(keyAddress, addr));
+				}
+			}
+		}
+		else
+		{
+			if(it != mapAnonymousServices.end())
+				mapAnonymousServices.erase(it);
+		}
+	}
+}
+
+
+int CWallet::GetUpdatedServiceListCount()
+{
+	int sz = mapAnonymousServices.size();
+	if(fDebugAnon)
+		printf(">> GetUpdatedServiceListCount: init sz = %d\n", sz);
+
+	map<string, string> mapNew;
+	{
+		LOCK2(cs_servicelist, cs_vNodes);
+		bool exist = false;
+		for(map<string, string>::iterator it = mapAnonymousServices.begin(); it != mapAnonymousServices.end(); it++)
+		{
+			std::string ip = it->second;
+			exist = false;
+
+			BOOST_FOREACH(CNode* pnode, vNodes)
+			{
+				string nodeAddr = pnode->addrName;
+				nodeAddr = nodeAddr.substr(0, nodeAddr.find(":"));
+				if(ip == nodeAddr)
+				{
+					exist = true;
+					break;
+				}
+			}
+			
+			if(exist == true)
+			{
+				mapNew.insert(make_pair(it->first, it->second));
+			}
+		}
+	}
+
+	mapAnonymousServices = mapNew;
+	sz = mapAnonymousServices.size();
+	if(fDebugAnon)
+		printf(">> GetUpdatedServiceListCount: after sz = %d\n", sz);
+
+	return sz;
+}
+
+
+bool CWallet::CheckAnonymousServiceConditions() 
+{
+    int64_t nBalance = 0;
+    std::vector<COutput> vCoins;
+    AvailableCoins(vCoins);
+
+    BOOST_FOREACH(const COutput& out, vCoins)
+        nBalance += out.tx->vout[out.i].nValue;
+
+	if(nBalance < MIN_ANON_SERVICE_COIN)
+		return false;
+
+	if(GetSelfAddressCount() > 1)
+		return true;
+	
+	return false;
+}
+
+
+std::string CWallet::GetAddressPubKey(std::string strAddress)
+{
+	CBitcoinAddress address(strAddress);
+    bool isValid = address.IsValid();
+
+	if(!isValid)
+	{
+		if(fDebugAnon)
+			printf(">> ERROR. CWallet::GetAddressPubKey: invalid address.\n");
+		return "";
+	}
+
+	CTxDestination dest = address.Get();
+    bool fMine = ::IsMine(*this, dest);
+	if(!fMine)
+	{
+		if(fDebugAnon)
+			printf(">> ERROR. CWallet::GetAddressPubKey: address is not mine.\n");
+		return "";
+	}
+
+	CKeyID keyID = boost::get<CKeyID>(dest);
+    CPubKey vchPubKey;
+    GetPubKey(keyID, vchPubKey);
+    std::string pubKey = HexStr(vchPubKey.Raw());
+	return pubKey;
+}
+
+
+bool CWallet::CreateMultiSigAddress()
+{
+	// Get data from pCurrentAnonymousTxInfo
+	int nRequired = 2;
+	std::vector<std::string> keys = pCurrentAnonymousTxInfo->GetAllPubKeys();
+
+    // Construct using pay-to-script-hash:
+    std::vector<CKey> pubkeys;
+    pubkeys.resize(keys.size());
+
+	for (unsigned int i = 0; i < keys.size(); i++)
+    {
+        const std::string& ks = keys.at(i);
+		if(fDebugAnon)
+			printf(">> Public Key: %s\n", ks.c_str());
+
+		// Case 1: Bitcoin address and we have full public key:
+        CBitcoinAddress address(ks);
+        if (address.IsValid())
+        {
+            CKeyID keyID;
+            if (!address.GetKeyID(keyID))
+			{
+                printf("CreateMultiSigAddress(): %s does not refer to a key\n", ks.c_str());
+				return false;
+			}
+
+            CPubKey vchPubKey;
+            if (!GetPubKey(keyID, vchPubKey))
+			{
+                printf("CreateMultiSigAddress(): no full public key for address %s\n", ks.c_str());
+				return false;
+			}
+            if (!vchPubKey.IsValid() || !pubkeys[i].SetPubKey(vchPubKey))
+			{
+                printf("CreateMultiSigAddress(): Invalid public key: %s\n", ks.c_str());
+				return false;
+			}
+        }
+
+        // Case 2: hex public key
+        else if (IsHex(ks))
+        {
+            CPubKey vchPubKey(ParseHex(ks));
+            if (!vchPubKey.IsValid() || !pubkeys[i].SetPubKey(vchPubKey))
+			{
+                printf("CreateMultiSigAddress(): Invalid public key: %s\n", ks.c_str());
+				return false;
+			}
+        }
+        else
+        {
+            printf("CreateMultiSigAddress(): Invalid public key: %s\n", ks.c_str());
+			return false;
+        }
+    }
+
+    CScript inner;
+    inner.SetMultisig(nRequired, pubkeys);
+    CScriptID innerID = inner.GetID();
+    CBitcoinAddress address(innerID);
+
+	// add results to pCurrentAnonymousTxInfo
+    std::string multiSigAddress = address.ToString();
+    std::string redeemScript = HexStr(inner.begin(), inner.end());
+	if(fDebugAnon)
+		printf(">> CreateMultiSigAddress: multiSigAddress = %s, redeemScript = %s\n",
+			multiSigAddress.c_str(), redeemScript.c_str());
+
+	pCurrentAnonymousTxInfo->SetMultiSigAddress(multiSigAddress, redeemScript);
+	return true;
+}
+
+
+bool CWallet::ExtractVoutAndScriptPubKey(AnonymousTxRole role, std::string txid, int& voutn, std::string& hexScriptPubKey)
+{
+	if(fDebug)
+		printf(">> ExtractVoutAndScriptPubKey for txid = %s\n", txid.c_str());
+
+    uint256 hash;
+    hash.SetHex(txid);
+    CTransaction tx;
+    uint256 hashBlock = 0;
+    if(!::GetTransaction(hash, tx, hashBlock))
+	{
+        printf(">> ExtractVoutAndScriptPubKey for txid = %s can not be found.\n", txid.c_str());
+		return false;
+	}
+
+	int64_t amount = pCurrentAnonymousTxInfo->GetTotalRequiredCoinsToSend(role);
+	std::vector<CTxOut> vout = tx.vout;
+	int sz = vout.size();
+	voutn = 0;
+	if(sz > 0)
+	{
+		for(int i = 0; i < sz; i++)
+		{
+			if(vout.at(i).nValue == amount)
+			{
+				voutn = i;
+				break;
+			}
+		}
+	}	
+
+	CScript scriptPubKey = tx.vout[voutn].scriptPubKey;
+	hexScriptPubKey = HexStr(scriptPubKey.begin(), scriptPubKey.end());
+	return true;
+}
+
+
+std::string CWallet::CreateMultiSigDistributionTx()
+{
+	// extract info from deposit tx's
+	// sender
+	std::string txidSender = pCurrentAnonymousTxInfo->GetTxid(ROLE_SENDER);
+	int voutnSender;
+	string scriptPubKeySender;
+	bool b = ExtractVoutAndScriptPubKey(ROLE_SENDER, txidSender, voutnSender, scriptPubKeySender);
+	if(!b)
+	{
+		printf("ERROR. Can not extract sender's deposit tx voutN and scriptPubKey.\n");
+		return "";
+	}
+	pCurrentAnonymousTxInfo->SetVoutAndScriptPubKey(ROLE_SENDER, voutnSender, scriptPubKeySender);
+
+	// mixer
+	std::string txidMixer = pCurrentAnonymousTxInfo->GetTxid(ROLE_MIXER);
+	int voutnMixer;
+	string scriptPubKeyMixer;
+	b = ExtractVoutAndScriptPubKey(ROLE_MIXER, txidMixer, voutnMixer, scriptPubKeyMixer);
+	if(!b)
+	{
+		printf("ERROR. Can not extract mixer's deposit tx voutN and scriptPubKey.\n");
+		return "";
+	}
+	pCurrentAnonymousTxInfo->SetVoutAndScriptPubKey(ROLE_MIXER, voutnMixer, scriptPubKeyMixer);
+
+	// guarantor
+	std::string txidGuarantor = pCurrentAnonymousTxInfo->GetTxid(ROLE_GUARANTOR);
+	int voutnGuarantor;
+	string scriptPubKeyGuarantor;
+	b = ExtractVoutAndScriptPubKey(ROLE_GUARANTOR, txidGuarantor, voutnGuarantor, scriptPubKeyGuarantor);
+	if(!b)
+	{
+		printf("ERROR. Can not extract guarantor's deposit tx voutN and scriptPubKey.\n");
+		return "";
+	}
+	pCurrentAnonymousTxInfo->SetVoutAndScriptPubKey(ROLE_GUARANTOR, voutnGuarantor, scriptPubKeyGuarantor);
+
+	// now creating raw distribution tx
+    CTransaction rawTx;
+
+    uint256 txid256;
+    txid256.SetHex(txidSender);
+    CTxIn in1(COutPoint(uint256(txid256), voutnSender));
+    rawTx.vin.push_back(in1);
+
+    txid256.SetHex(txidMixer);
+    CTxIn in2(COutPoint(uint256(txid256), voutnMixer));
+    rawTx.vin.push_back(in2);
+
+    txid256.SetHex(txidGuarantor);
+    CTxIn in3(COutPoint(uint256(txid256), voutnGuarantor));
+    rawTx.vin.push_back(in3);
+
+    set<CBitcoinAddress> setAddress;
+	int64_t baseAmount = pCurrentAnonymousTxInfo->GetTotalRequiredCoinsToSend(ROLE_MIXER);
+	int64_t paidfee = baseAmount * 0.01;
+	if(paidfee < 0.5 * COIN)
+		paidfee = 0.5 * COIN;
+	int64_t fee = 5 * MIN_TX_FEE;	// may need to adjust this
+	int64_t servicefee = (paidfee - fee) / 2;
+
+	// sender gets baseAmount
+	std::string addressSender = pCurrentAnonymousTxInfo->GetAddress(ROLE_SENDER);
+    CBitcoinAddress addressS(addressSender);
+    setAddress.insert(addressS);
+    CScript spkSender;
+    spkSender.SetDestination(addressS.Get());
+	CTxOut out1(baseAmount, spkSender);
+    rawTx.vout.push_back(out1);
+
+	// mixer gets 2 * baseAmount + servicefee
+	std::string addressMixer = pCurrentAnonymousTxInfo->GetAddress(ROLE_MIXER);
+    CBitcoinAddress addressM(addressMixer);
+    setAddress.insert(addressM);
+    CScript spkMixer;
+	spkMixer.SetDestination(addressM.Get());
+	CTxOut out2(2 * baseAmount + servicefee, spkMixer);
+    rawTx.vout.push_back(out2);
+
+	// guarantor gets baseAmount + servicefee
+	std::string addressGuarantor = pCurrentAnonymousTxInfo->GetAddress(ROLE_GUARANTOR);
+    CBitcoinAddress addressG(addressGuarantor);
+    setAddress.insert(addressG);
+    CScript spkGuarantor;
+	spkGuarantor.SetDestination(addressG.Get());
+	CTxOut out3(baseAmount + servicefee, spkGuarantor);
+    rawTx.vout.push_back(out3);
+
+    CDataStream ss(SER_NETWORK, PROTOCOL_VERSION);
+    ss << rawTx;
+    std::string tx = HexStr(ss.begin(), ss.end());
+	if(fDebugAnon)
+		printf(">> Distribution tx created. tx = %s\n", tx.c_str());
+
+	pCurrentAnonymousTxInfo->SetTx(tx, 0);
+
+	return tx;
+}
+
+
+bool CWallet::GetPrivKey(std::string strAddress, std::string& strPrivateKey)
+{
+	strPrivateKey = "";
+    CBitcoinAddress address;
+    if(!address.SetString(strAddress))
+	{
+		printf("ERROR. GetPrivKey: Invalid SuperCoin address.\n");
+        return false;
+	}
+
+    CKeyID keyID;
+    if(!address.GetKeyID(keyID))
+	{
+		printf("ERROR. GetPrivKey: Address does not refer to a key.\n");
+        return false;
+	}
+
+    CSecret vchSecret;
+    bool fCompressed;
+    if(!GetSecret(keyID, vchSecret, fCompressed))
+	{
+		printf("ERROR. GetPrivKey: Private key for address %s is not known.\n", strAddress.c_str());
+        return false;
+	}
+
+    strPrivateKey = CBitcoinSecret(vchSecret, fCompressed).ToString();
+	return true;
+}
+
+
+bool CWallet::AddPrevTxOut(AnonymousTxRole role, CBasicKeyStore& tempKeystore, std::map<COutPoint, CScript>& mapPrevOut)
+{
+	std::string txidHex = "";
+	int nOut = 0;
+	std::string pkHex = "";
+	pCurrentAnonymousTxInfo->GetMultisigTxOutInfo(role, txidHex, nOut, pkHex);
+
+	if(fDebugAnon)
+	{
+		printf(">> AddPrevTxOut: role = %d, txidHex = %s, nOut = %d, pkHex = %s\n", 
+			role, txidHex.c_str(), nOut, pkHex.c_str());
+	}
+
+	std::string rdmScript = pCurrentAnonymousTxInfo->GetRedeemScript();
+	if(fDebugAnon)
+	{
+		printf(">> AddPrevTxOut: rdmScript = %s\n", rdmScript.c_str());
+	}
+
+	uint256 txid;
+    txid.SetHex(txidHex);
+
+    vector<unsigned char> pkData(ParseHex(pkHex));
+    CScript scriptPubKey(pkData.begin(), pkData.end());
+
+    COutPoint outpoint(txid, nOut);
+    if(mapPrevOut.count(outpoint))
+    {
+		// Complain if scriptPubKey doesn't match
+		if (mapPrevOut[outpoint] != scriptPubKey)
+		{
+			string err("Previous output scriptPubKey mismatch:\n");
+			err = err + mapPrevOut[outpoint].ToString() + "\nvs:\n"+
+				scriptPubKey.ToString();
+			printf("AddPrevTxOut: Error. %s\n", err.c_str());
+			return false;
+		}
+	}
+	else
+		mapPrevOut[outpoint] = scriptPubKey;
+
+	// if redeemScript given and not using the local wallet (private keys
+	// given), add redeemScript to the tempKeystore so it can be signed:
+	if (scriptPubKey.IsPayToScriptHash())
+	{
+		vector<unsigned char> rsData(ParseHex(rdmScript));
+		CScript redeemScript(rsData.begin(), rsData.end());
+		tempKeystore.AddCScript(redeemScript);
+	}
+
+	return true;
+}
+
+
+bool CWallet::SignMultiSigDistributionTx()
+{
+	std::string miltisigtx = pCurrentAnonymousTxInfo->GetTx();
+	if(fDebugAnon)
+		printf(">> SignMultiSigDistributionTx: miltisigtx = %s\n", miltisigtx.c_str());
+
+	vector<unsigned char> txData(ParseHex(miltisigtx));
+    CDataStream ssData(txData, SER_NETWORK, PROTOCOL_VERSION);
+    vector<CTransaction> txVariants;
+    while (!ssData.empty())
+    {
+        try 
+		{
+            CTransaction tx;
+            ssData >> tx;
+            txVariants.push_back(tx);
+
+			if(fDebugAnon)
+			{
+				printf(">> SignMultiSigDistributionTx: CTransaction:\n");
+				tx.print();
+			}
+        }
+        catch (std::exception &e) 
+		{
+			printf("ERROR. SignMultiSigDistributionTx: TX decode failed.\n");
+            return false;
+        }
+    }
+
+    if (txVariants.empty())
+	{
+ 		printf("ERROR. SignMultiSigDistributionTx: Missing transaction.\n");
+        return false;
+	}
+
+    // mergedTx will end up with all the signatures; it
+    // starts as a clone of the rawtx:
+    CTransaction mergedTx(txVariants[0]);
+    bool fComplete = true;
+
+    // Fetch previous transactions (inputs):
+    map<COutPoint, CScript> mapPrevOut;
+    for (unsigned int i = 0; i < mergedTx.vin.size(); i++)
+    {
+        CTransaction tempTx;
+        MapPrevTx mapPrevTx;
+        CTxDB txdb("r");
+        map<uint256, CTxIndex> unused;
+        bool fInvalid;
+
+        // FetchInputs aborts on failure, so we go one at a time.
+        tempTx.vin.push_back(mergedTx.vin[i]);
+        tempTx.FetchInputs(txdb, unused, false, false, mapPrevTx, fInvalid);
+
+        // Copy results into mapPrevOut:
+        BOOST_FOREACH(const CTxIn& txin, tempTx.vin)
+        {
+            const uint256& prevHash = txin.prevout.hash;
+            if (mapPrevTx.count(prevHash) && mapPrevTx[prevHash].second.vout.size()>txin.prevout.n)
+                mapPrevOut[txin.prevout] = mapPrevTx[prevHash].second.vout[txin.prevout.n].scriptPubKey;
+        }
+    }
+
+	// get self private key 
+	std::string selfAddress = pCurrentAnonymousTxInfo->GetSelfAddress();
+	std::string strPrivKey = "";
+	bool b = GetPrivKey(selfAddress, strPrivKey);
+	if(!b)
+	{
+		printf("SignMultiSigDistributionTx: failed to get private key, for selfAddress = %s\n", selfAddress.c_str());
+		return false;
+	}
+
+	if(fDebugAnon)
+		printf(">> SignMultiSigDistributionTx: selfAddress = %s, strPrivKey = %s...\n", selfAddress.c_str(), strPrivKey.substr(0,10).c_str());
+
+    bool fGivenKeys = true;
+    CBasicKeyStore tempKeystore;
+    CBitcoinSecret vchSecret;
+    bool fGood = vchSecret.SetString(strPrivKey);
+    if(!fGood)
+	{
+ 		printf("ERROR. SignMultiSigDistributionTx: Invalid private key. strPrivKey = %s\n", strPrivKey.c_str());
+        return false;
+	}
+            
+	CKey key;
+    bool fCompressed;
+    CSecret secret = vchSecret.GetSecret(fCompressed);
+    key.SetSecret(secret, fCompressed);
+    tempKeystore.AddKey(key);
+
+    // Add previous txouts
+	b = AddPrevTxOut(ROLE_SENDER,		tempKeystore, mapPrevOut);
+	if(!b)
+	{
+		printf("SignMultiSigDistributionTx: failed add previous txout, for sender\n");
+		return false;
+	}
+
+	b = AddPrevTxOut(ROLE_MIXER,		tempKeystore, mapPrevOut);
+	if(!b)
+	{
+		printf("SignMultiSigDistributionTx: failed add previous txout, for mixer\n");
+		return false;
+	}
+
+	b = AddPrevTxOut(ROLE_GUARANTOR,	tempKeystore, mapPrevOut);
+	if(!b)
+	{
+		printf("SignMultiSigDistributionTx: failed add previous txout, for guarantor\n");
+		return false;
+	}
+
+    const CKeyStore& keystore = tempKeystore;
+
+    int nHashType = SIGHASH_ALL;
+    bool fHashSingle = ((nHashType & ~SIGHASH_ANYONECANPAY) == SIGHASH_SINGLE);
+
+    // Sign what we can:
+    for (unsigned int i = 0; i < mergedTx.vin.size(); i++)
+    {
+        CTxIn& txin = mergedTx.vin[i];
+        if (mapPrevOut.count(txin.prevout) == 0)
+        {
+            fComplete = false;
+            continue;
+        }
+        const CScript& prevPubKey = mapPrevOut[txin.prevout];
+
+        txin.scriptSig.clear();
+        // Only sign SIGHASH_SINGLE if there's a corresponding output:
+        if (!fHashSingle || (i < mergedTx.vout.size()))
+		{
+            ::SignSignature(keystore, prevPubKey, mergedTx, i, nHashType);
+		}
+
+        // ... and merge in other signatures:
+        BOOST_FOREACH(const CTransaction& txv, txVariants)
+        {
+            txin.scriptSig = ::CombineSignatures(prevPubKey, mergedTx, i, txin.scriptSig, txv.vin[i].scriptSig);
+        }
+        if (!::VerifyScript(txin.scriptSig, prevPubKey, mergedTx, i, 0))
+            fComplete = false;
+    }
+
+    CDataStream ssTx(SER_NETWORK, PROTOCOL_VERSION);
+    ssTx << mergedTx;
+	std::string signedTx = HexStr(ssTx.begin(), ssTx.end());
+
+	int signedcount = pCurrentAnonymousTxInfo->GetSignedCount();
+	if(fDebugAnon)
+		printf(">> SignMultiSigDistributionTx: SignedCount before incrementing = %d\n", signedcount);
+
+	++signedcount;
+
+	if(fDebugAnon)
+	{
+		printf(">> SignMultiSigDistributionTx: signedTx = %s\n", signedTx.c_str());
+		printf(">> SignMultiSigDistributionTx: SignedCount = %d\n", signedcount);
+	}
+
+	if(signedcount == 2 && fComplete == false)
+	{
+		printf("ERROR. SignMultiSigDistributionTx: signedcount == 2 but not complete.\n");
+		return false;
+	}
+	else if(signedcount == 1 && fComplete == true)
+	{
+		printf("ERROR. SignMultiSigDistributionTx: signedcount == 1 but already complete.\n");
+		return false;
+	}
+
+	pCurrentAnonymousTxInfo->SetTx(signedTx, signedcount);
+	return true;
+}
+
+
+bool CWallet::SendMultiSigDistributionTx()
+{
+	std::string signedTx = pCurrentAnonymousTxInfo->GetTx();
+	int signedCount = pCurrentAnonymousTxInfo->GetSignedCount();
+	if(signedCount < 2)
+	{
+		printf("ERROR. SendMultiSigDistributionTx: there are not enough signings in the tx.\n");
+		return false;
+	}
+
+    vector<unsigned char> txData(ParseHex(signedTx));
+    CDataStream ssData(txData, SER_NETWORK, PROTOCOL_VERSION);
+    CTransaction tx;
+
+    // deserialize binary data stream
+    try 
+	{
+        ssData >> tx;
+    }
+    catch (std::exception &e) 
+	{
+		printf("ERROR. SendMultiSigDistributionTx: TX decode failed.\n");
+		return false;
+    }
+
+    uint256 hashTx = tx.GetHash();
+
+    // See if the transaction is already in a block
+    // or in the memory pool:
+    CTransaction existingTx;
+    uint256 hashBlock = 0;
+    if(::GetTransaction(hashTx, existingTx, hashBlock))
+    {
+        if(hashBlock != 0)
+		{
+			printf("ERROR. SendMultiSigDistributionTx: Transaction already in block.\n");
+			return false;
+		}
+    }
+    else
+    {
+        // push to local node
+        CTxDB txdb("r");
+        if(!tx.AcceptToMemoryPool(txdb))
+		{
+			printf("ERROR. SendMultiSigDistributionTx: TX rejected.\n");
+			return false;
+		}
+
+        SyncWithWallets(tx, NULL, true);
+    }
+
+    RelayTransaction(tx, hashTx);
+    std::string committed = hashTx.GetHex();
+	if(fDebugAnon)
+		printf(">> SendMultiSigDistributionTx: committedTx = %s\n", committed.c_str());
+
+	pCurrentAnonymousTxInfo->SetCommittedMsTx(committed);
+
+	return true;
+}
+
+
+int CWallet::GetSelfAddressCount()
+{
+	int count = 0;
+
+    LOCK(cs_wallet);
+    BOOST_FOREACH(const PAIRTYPE(CTxDestination, std::string)& item, mapAddressBook)
+    {
+		const CBitcoinAddress& address = item.first;
+		const std::string& strName = item.second;
+		bool fMine = ::IsMine(*this, address.Get());
+        if(fMine)
+			++count;
+    }
+
+	if(fDebugAnon)
+		printf(">> GetSelfAddressCount: count = %d\n", count);
+
+	return count;
+}
+
+
+std::string CWallet::GetSelfAddress()
+{
+	if(selfAddress != "")
+		return selfAddress;
+
+	// we want to get a self address. it doesn't matter which address we get, 
+	// whether it is an address in the sending selected coins or not.
+	std::vector<COutput> vCoins;
+	AvailableCoins(vCoins);
+
+	BOOST_FOREACH(const COutput& out, vCoins)
+	{
+		COutput cout = out;
+
+		while (IsChange(cout.tx->vout[cout.i]) && cout.tx->vin.size() > 0 && IsMine(cout.tx->vin[0]))
+		{
+			if (!mapWallet.count(cout.tx->vin[0].prevout.hash)) 
+				break;
+			cout = COutput(&mapWallet[cout.tx->vin[0].prevout.hash], cout.tx->vin[0].prevout.n, 0);
+		}
+
+		CTxDestination address;
+		if(!ExtractDestination(cout.tx->vout[cout.i].scriptPubKey, address))
+			continue;
+
+		if(cout.tx == NULL)
+			continue;
+
+		selfAddress = CBitcoinAddress(address).ToString();
+		if(fDebugAnon)
+			printf(">> selfAddress = %s\n", selfAddress.c_str());
+
+		break;
+	}
+
+	return selfAddress;
+}
+
+
+bool CAnonymousTxInfo::SetInitialData(AnonymousTxRole role, std::vector< std::pair<std::string, int64_t> > vecSendInfo0, const CCoinControl* pCoinControl0,
+		CNode* pSendNode, CNode* pMixerNode, CNode* pGuarantorNode, CWallet* pWallet)
+{
+	lastActivityTime = GetTime();
+
+	status = ATX_STATUS_INITDATA;
+	size = vecSendInfo0.size();
+	if(size == 0) return true;
+
+	vecSendInfo = vecSendInfo0;
+	pCoinControl = pCoinControl0;
+
+	std::vector<COutPoint> vOutpoints;
+	if(pCoinControl != NULL)
+	{
+		pCoinControl->ListSelected(vOutpoints);
+		if(vOutpoints.size() == 0)
+			pCoinControl = NULL;
+	}
+
+	std::string text = "Sender";
+	if(role == ROLE_MIXER)
+		text = "Mixer";
+	else if(role == ROLE_GUARANTOR)
+		text = "Guarantor";
+
+	text = "Self Role is set to " + text + ".";
+	AddToLog(text);
+
+	pParties->SetRole(role);
+	if(pSendNode != NULL)
+		pParties->SetNode(ROLE_SENDER, pSendNode);
+
+	if(pMixerNode != NULL)
+		pParties->SetNode(ROLE_MIXER, pMixerNode);
+
+	if(pGuarantorNode != NULL)
+		pParties->SetNode(ROLE_GUARANTOR, pGuarantorNode);
+
+	std::string selfAddress = pWallet->GetSelfAddress();
+
+	if(selfAddress == "")
+	{
+		if(fDebugAnon)
+			printf(">> ERROR. CAnonymousSendInfo::SetInitData: can't find SelfAddress.\n");
+		return false;
+	}
+
+	std::string selfPubKey = pWallet->GetAddressPubKey(selfAddress);
+	pParties->SetAddressAndPubKey(role, selfAddress, selfPubKey);
+
+	text = "Selected SelfAddress = " + selfAddress + ", PublicKey = " + selfPubKey + ".";
+	AddToLog(text);
+
+	if(role == ROLE_SENDER)
+	{
+		long long int now = GetTime();
+		char tempa[100];
+		sprintf(tempa, "%s-%lld", selfAddress.c_str(), now);
+		anonymousId = string(tempa);
+
+		if(fDebugAnon)
+			printf(">> anonymousId = %s\n", anonymousId.c_str());
+
+		text = "Created AnonymousId: " + anonymousId + ".";
+		AddToLog(text);
+	}
+
+	AddToLog("Set Initial Send Info.");
+
+	return true;
+}
+
+
+int64_t CAnonymousTxInfo::GetTotalRequiredCoinsToSend(AnonymousTxRole role)
+{
+	int64_t baseAmount = 0;
+	int64_t finalAmount = 0;
+	int64_t fee = 0;
+
+	for(int i = 0; i < size; i++)
+		baseAmount += vecSendInfo.at(i).second;
+	
+	// sender will deposit 2 X BaseAmount + fee, while mixer/guarantor each deposit BaseAmount
+	if(role == ROLE_UNKNOWN)
+		role = pParties->GetRole();
+
+	switch(role)
+	{
+		case ROLE_SENDER:
+			fee = baseAmount * 0.01;
+			if(fee < 0.5 * COIN)
+				fee = 0.5 * COIN;
+
+			finalAmount = 2 * baseAmount + fee;
+			break;
+
+		case ROLE_MIXER:
+		case ROLE_GUARANTOR:
+			finalAmount = baseAmount;
+			break;
+	}
+
+	return finalAmount;
+}
+
+
+int64_t CAnonymousTxInfo::GetDepositedAmount(CTransaction tx)
+{
+	lastActivityTime = GetTime();
+	int64_t matchedAmount = 0;
+	std::vector<CTxOut> vout = tx.vout;
+
+	BOOST_FOREACH(const CTxOut& out, vout)
+	{
+		CScript sPubKey = out.scriptPubKey;
+		vector<CTxDestination> addresses;
+		int nRequired;
+		txnouttype type;
+		bool b = false;
+
+		if(!ExtractDestinations(sPubKey, type, addresses, nRequired))
+			continue;
+
+		BOOST_FOREACH(const CTxDestination& addr, addresses)
+		{
+			std::string strAddr = CBitcoinAddress(addr).ToString();
+			if(strAddr == multiSigAddress)
+			{
+				b = true;
+				break;
+			}
+		}
+
+		if(b)
+			matchedAmount += out.nValue;
+	}
+
+	return matchedAmount;
+}
+
+
+bool CAnonymousTxInfo::CheckDeposit(AnonymousTxRole role, CWallet* pWallet)
+{
+	bool b = false;
+	int64_t amount0 = GetTotalRequiredCoinsToSend(role);
+	int64_t amount = 0;
+	lastActivityTime = GetTime();
+
+	std::string txid = pMultiSigDistributionTx->GetTxid(role);
+	uint256 hash;
+	hash.SetHex(txid);
+
+	if(pWallet->mapWallet.count(hash))
+	{
+		if(fDebugAnon)
+			printf(">> CheckDeposit: found txid = %s\n", txid.c_str());
+
+		const CWalletTx& wtx = pWallet->mapWallet[hash];
+		int64_t nCredit = wtx.GetCredit();
+		int64_t nDebit = wtx.GetDebit();
+		int64_t nNet = nCredit - nDebit;
+		int64_t nFee = (wtx.IsFromMe() ? wtx.GetValueOut() - nDebit : 0);
+		amount = nNet - nFee;
+		if(amount < 0)
+			amount = - amount;
+
+		if(fDebugAnon)
+			printf(">> CheckDeposit: found deposited amount from wtx = %"PRId64"\n", amount);
+
+		if(amount < amount0)
+		{
+			printf(">> CheckDeposit: did not deposit enough. Expected = %"PRId64", deposited = %"PRId64"\n", amount0, amount);
+			return false;
+		}
+	}
+	else
+    {
+        CTransaction tx;
+        uint256 hashBlock = 0;
+        if(::GetTransaction(hash, tx, hashBlock))
+        {
+			if(fDebugAnon)
+			{
+				printf(">> CheckDeposit: found tx for txid = %s\n", txid.c_str());
+				tx.print();
+			}
+
+			amount = GetDepositedAmount(tx);
+			if(fDebugAnon)
+				printf(">> CheckDeposit: found deposited amount from tx = %"PRId64"\n", amount);
+
+			if(amount < amount0)
+			{
+				printf(">> CheckDeposit: did not deposit enough. Expected = %"PRId64", deposited = %"PRId64"\n", amount0, amount);
+				return false;
+			}
+        }
+        else
+		{
+			if(fDebugAnon)
+				printf(">> CheckDeposit: not found txid = %s\n", txid.c_str());
+			return false;
+		}
+	}
+
+	return true;
+}
+
+
+bool CAnonymousTxInfo::CheckDepositTxes(CWallet* pWallet)
+{
+	lastActivityTime = GetTime();
+	if(fDebugAnon)
+		printf(">> CheckDepositTxes: Verify sender's deposit.\n");
+	bool b = CheckDeposit(ROLE_SENDER, pWallet);
+	if(!b)
+	{
+		if(fDebugAnon)
+			printf(">> CheckDepositTxes: sender's deposit verification failed.\n");
+		return false;
+	}
+
+	if(fDebugAnon)
+		printf(">> CheckDepositTxes: Verify mixer's deposit.\n");
+	b = CheckDeposit(ROLE_MIXER, pWallet);
+	if(!b)
+	{
+		if(fDebugAnon)
+			printf(">> CheckDepositTxes: mixer's deposit verification failed.\n");
+		return false;
+	}
+
+	if(fDebugAnon)
+		printf(">> CheckDepositTxes: Verify guarantor's deposit.\n");
+	b = CheckDeposit(ROLE_GUARANTOR, pWallet);
+	if(!b)
+	{
+		if(fDebugAnon)
+			printf(">> CheckDepositTxes: guarantor's deposit verification failed.\n");
+		return false;
+	}
+
+	return true;
+}
+
+
+bool CAnonymousTxInfo::CheckSendTx(CWallet* pWallet)
+{
+	bool b = false;
+	int64_t amount0 = 0;
+	int64_t amount = 0;
+	lastActivityTime = GetTime();
+
+	uint256 hash;
+	hash.SetHex(sendTx);
+
+	if(pWallet->mapWallet.count(hash))
+	{
+		if(fDebugAnon)
+			printf(">> found send txid for %s\n", sendTx.c_str());
+
+		const CWalletTx& wtx = pWallet->mapWallet[hash];
+		int64_t nCredit = wtx.GetCredit();
+		int64_t nDebit = wtx.GetDebit();
+		int64_t nNet = nCredit - nDebit;
+		int64_t nFee = (wtx.IsFromMe() ? wtx.GetValueOut() - nDebit : 0);
+		amount = nNet - nFee;
+		amount0 = GetTotalRequiredCoinsToSend(ROLE_MIXER);
+
+		if(amount < amount0)
+		{
+			printf(">> Mixer did not send enough to destination. Expected = %"PRId64", deposited = %"PRId64"\n", amount0, amount);
+			return false;
+		}
+	}
+	else
+    {
+        CTransaction tx;
+        uint256 hashBlock = 0;
+        if(::GetTransaction(hash, tx, hashBlock))
+        {
+			if(fDebugAnon)
+			{
+				printf(">> CheckSendTx: found tx for sendTx = %s\n", sendTx.c_str());
+				tx.print();
+			}
+
+			amount = GetDepositedAmount(tx);
+			if(fDebugAnon)
+				printf(">> CheckSendTx: found deposited amount from tx = %"PRId64"\n", amount);
+
+			if(amount < amount0)
+			{
+				printf(">> CheckSendTx: did not send enough. Expected = %"PRId64", deposited = %"PRId64"\n", amount0, amount);
+				return false;
+			}
+        }
+        else
+		{
+			if(fDebugAnon)
+				printf(">> CheckSendTx: not found sendTx = %s\n", sendTx.c_str());
+			return false;
+		}
+	}
+
+	return true;
+}
+
+
+bool CAnonymousTxInfo::IsCurrentTxInProcess() const
+{
+	if((status == ATX_STATUS_NONE) || (status == ATX_STATUS_COMPLETE))
+		return false;
+
+	return true;
+}
+
+
+bool CAnonymousTxInfo::CanReset() const
+{
+	static int64_t MAXIMUM_TRANSACTION_TIMEOUT = 180; // 3 mins, in first few steps, no reply allows remove
+
+	if(status < 5)	// before escrow deoposited
+	{
+		int64_t now = GetTime();
+		if((now - lastActivityTime) > MAXIMUM_TRANSACTION_TIMEOUT)	
+		{
+			return true;
+		}
+	}
+
+	return false;
+}
+
+
+void CAnonymousTxInfo::AddToLog(std::string text)
+{
+	std::string logtext = currentDateTime() + ": " + text;
+	logs.push_back(logtext);
+}
+
+
+std::string CAnonymousTxInfo::GetLastAnonymousTxLog()
+{
+	std::string logText = "";
+	if(logs.empty())
+	{
+		logText = "No Anonymous Transaction Info available\n";
+		return logText;
+	}
+
+	logText = "The status of last/current transaction: ";
+	switch (status)
+	{
+		case ATX_STATUS_RESERVE:
+			logText += "ATX_STATUS_RESERVE (Service Reserved).\n\n";
+			break;
+
+		case ATX_STATUS_INITDATA:
+			logText += "ATX_STATUS_INITDATA (Initial Data Set).\n\n";
+			break;
+
+		case ATX_STATUS_PUBKEY:
+			logText += "ATX_STATUS_PUBKEY (All public keys are available).\n\n";
+			break;
+
+		case ATX_STATUS_MSADDR:
+			logText += "ATX_STATUS_MSADDR (2-of-3 multisig address created).\n\n";
+			break;
+
+		case ATX_STATUS_MSDEPO:
+			logText += "ATX_STATUS_MSDEPO (Deposits to 2-of-3 multisig address completed).\n\n";
+			break;
+
+		case ATX_STATUS_MSDEPV:
+			logText += "ATX_STATUS_MSDEPV (Desposits to 2-of-3 multisig address verified).\n\n";
+			break;
+
+		case ATX_STATUS_MSTXR0:
+			logText += "ATX_STATUS_MSTXR0 (Multisig distribution transaction created).\n\n";
+			break;
+
+		case ATX_STATUS_MSTXR1:
+			logText += "ATX_STATUS_MSTXR1 (Multisig distribution transaction signed once).\n\n";
+			break;
+
+		case ATX_STATUS_MSTXRC:
+			logText += "ATX_STATUS_MSTXRC (Multisig distribution transaction signed twice - complete).\n\n";
+			break;
+
+		case ATX_STATUS_COMPLETE:
+			logText += "ATX_STATUS_COMPLETE (Anonymous transaction completed).\n\n";
+			break;
+	}
+
+	for(int i = 0; i < logs.size(); i++)
+	{
+		logText += logs.at(i) + "\n";
+	}
+
+	logText += "\n\n";
+
+	return logText;
+}
+
+
+std::string CAnonymousTxInfo::GetNodeIpAddress(AnonymousTxRole role0) const
+{
+	CNode* pNode = GetNode(role0);
+
+	if(pNode == NULL)
+		return "";
+
+	string nodeAddr = pNode->addrName;
+	nodeAddr = nodeAddr.substr(0, nodeAddr.find(":"));
+	return nodeAddr;
+}
+

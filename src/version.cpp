@@ -11,8 +11,7 @@
 const std::string CLIENT_NAME("DeepOnion");
 
 // Client version number
-#define CLIENT_VERSION_SUFFIX   ""
-
+#define CLIENT_VERSION_SUFFIX   " (Trustless with Multisig)"
 
 // The following part of the code determines the CLIENT_BUILD variable.
 // Several mechanisms are used for this:

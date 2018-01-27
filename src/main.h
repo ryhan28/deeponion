@@ -53,6 +53,7 @@ inline int64_t FutureDrift(int64_t nTime) { return nTime + 2 * 60 * 60; } // up 
 
 extern CScript COINBASE_FLAGS;
 extern CCriticalSection cs_main;
+extern CCriticalSection cs_deepsend;
 extern std::map<uint256, CBlockIndex*> mapBlockIndex;
 extern std::set<std::pair<COutPoint, unsigned int> > setStakeSeen;
 extern CBlockIndex* pindexGenesisBlock;
@@ -125,6 +126,8 @@ void StakeMiner(CWallet *pwallet);
 void ResendWalletTransactions(bool fForce = false);
 
 bool GetWalletFile(CWallet* pwallet, std::string &strWalletFileOut);
+std::string GetLastAnonymousTxLog();
+std::string GetCurrentServiceNodeList();
 
 /** Position on disk for a particular transaction. */
 class CDiskTxPos

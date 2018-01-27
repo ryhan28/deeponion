@@ -176,6 +176,7 @@ extern json_spirit::Value movecmd(const json_spirit::Array& params, bool fHelp);
 extern json_spirit::Value sendfrom(const json_spirit::Array& params, bool fHelp);
 extern json_spirit::Value sendmany(const json_spirit::Array& params, bool fHelp);
 extern json_spirit::Value addmultisigaddress(const json_spirit::Array& params, bool fHelp);
+extern json_spirit::Value createmultisig(const json_spirit::Array& params, bool fHelp);
 extern json_spirit::Value addredeemscript(const json_spirit::Array& params, bool fHelp);
 extern json_spirit::Value listreceivedbyaddress(const json_spirit::Array& params, bool fHelp);
 extern json_spirit::Value listreceivedbyaccount(const json_spirit::Array& params, bool fHelp);
@@ -218,6 +219,8 @@ extern json_spirit::Value getblock(const json_spirit::Array& params, bool fHelp)
 extern json_spirit::Value getblockbynumber(const json_spirit::Array& params, bool fHelp);
 extern json_spirit::Value getcheckpoint(const json_spirit::Array& params, bool fHelp);
 extern json_spirit::Value getnetworkhashps(const json_spirit::Array& params, bool fHelp);
+extern json_spirit::Value getlastanontxinfo(const json_spirit::Array& params, bool fHelp);
+extern json_spirit::Value listservicenodes(const json_spirit::Array& params, bool fHelp);
 
 extern json_spirit::Value smsgenable(const json_spirit::Array& params, bool fHelp); // in rpcsmessage.cpp
 extern json_spirit::Value smsgdisable(const json_spirit::Array& params, bool fHelp);

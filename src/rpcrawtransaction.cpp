@@ -562,3 +562,25 @@ Value sendrawtransaction(const Array& params, bool fHelp)
 
     return hashTx.GetHex();
 }
+
+Value getlastanontxinfo(const Array& params, bool fHelp)
+{
+    if (fHelp || params.size() != 0)
+        throw runtime_error(
+            "getlastanontxinfo\n"
+            "Returns the last/current anonymous transaction info and log.");
+
+    return GetLastAnonymousTxLog();
+}
+
+
+Value listservicenodes(const Array& params, bool fHelp)
+{
+    if (fHelp || params.size() != 0)
+        throw runtime_error(
+            "listservicenodes\n"
+            "Lists the currently connected service nodes.");
+
+    return GetCurrentServiceNodeList();
+}
+

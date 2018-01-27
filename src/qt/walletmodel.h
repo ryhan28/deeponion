@@ -17,6 +17,8 @@ class COutput;
 class COutPoint;
 class uint256;
 class CCoinControl;
+class CScript;
+class CWalletTx;
 
 QT_BEGIN_NAMESPACE
 class QTimer;
@@ -125,6 +127,8 @@ public:
     void lockCoin(COutPoint& output);
     void unlockCoin(COutPoint& output);
     void listLockedCoins(std::vector<COutPoint>& vOutpts);
+	bool AreServiceNodesAvailable();
+	bool IsAnotherDeepSendInProcess();
 
 private:
     CWallet *wallet;
@@ -150,7 +154,9 @@ private:
     void subscribeToCoreSignals();
     void unsubscribeFromCoreSignals();
     void checkBalanceChanged();
-
+    
+    SendCoinsReturn sendCoinsNormal(const QList<SendCoinsRecipient> &recipients, int64_t balance, int64_t total, const CCoinControl *coinControl=NULL);
+    SendCoinsReturn sendCoinsUsingMixer(const QList<SendCoinsRecipient> &recipients, const CCoinControl *coinControl=NULL);
 
 public slots:
     /* Wallet status might have changed */

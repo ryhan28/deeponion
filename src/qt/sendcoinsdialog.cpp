@@ -50,6 +50,7 @@ SendCoinsDialog::SendCoinsDialog(QWidget *parent) :
     connect(ui->pushButtonCoinControl, SIGNAL(clicked()), this, SLOT(coinControlButtonClicked()));
     connect(ui->checkBoxCoinControlChange, SIGNAL(stateChanged(int)), this, SLOT(coinControlChangeChecked(int)));
     connect(ui->lineEditCoinControlChange, SIGNAL(textEdited(const QString &)), this, SLOT(coinControlChangeEdited(const QString &)));
+    connect(ui->checkBoxAnonymousSend, SIGNAL(stateChanged(int)), this, SLOT(anonymousSendChecked(int)));
 
     // Coin Control: clipboard actions
     QAction *clipboardQuantityAction = new QAction(tr("Copy quantity"), this);
@@ -112,6 +113,7 @@ SendCoinsDialog::~SendCoinsDialog()
     delete ui;
 }
 
+static int64_t MAX_ALLOWED_ANONYMOUS_SEND = 100 * COIN;
 void SendCoinsDialog::on_sendButton_clicked()
 {
     QList<SendCoinsRecipient> recipients;
@@ -150,11 +152,23 @@ void SendCoinsDialog::on_sendButton_clicked()
 
     fNewRecipientAllowed = false;
 
-    QMessageBox::StandardButton retval = QMessageBox::question(this, tr("Confirm send coins"),
+	QMessageBox::StandardButton retval = QMessageBox::Yes;
+
+	if(CoinControlDialog::coinControl->GetAnonymousSend())
+	{
+		retval = QMessageBox::question(this, tr("Confirm send coins"),
+                          tr("Are you sure you want to send %1? Remember with DeepSend 1% fee (minimum 0.1 ONION) will be added to your transaction. Also your minimum balance should be more than the twice of the amount (plus fee) you send. Otherwise please use regular send.").arg(formatted.join(tr(" and "))),
+          QMessageBox::Yes|QMessageBox::Cancel,
+          QMessageBox::Cancel);
+	}
+	else
+	{
+		retval = QMessageBox::question(this, tr("Confirm send coins"),
                           tr("Are you sure you want to send %1?").arg(formatted.join(tr(" and "))),
           QMessageBox::Yes|QMessageBox::Cancel,
           QMessageBox::Cancel);
-
+	}
+	
     if(retval != QMessageBox::Yes)
     {
         fNewRecipientAllowed = true;
@@ -168,6 +182,47 @@ void SendCoinsDialog::on_sendButton_clicked()
         fNewRecipientAllowed = true;
         return;
     }
+
+	// check on anonymous send
+	if(CoinControlDialog::coinControl->GetAnonymousSend())
+	{
+		// also we allow max MAX_ALLOWED_ANONYMOUS_SEND SUPERs at a time using anonymous send
+		int64_t totalSend = 0;
+
+		foreach(const SendCoinsRecipient &rcp, recipients)
+		{
+			totalSend += rcp.amount;
+		}
+
+		if(totalSend > MAX_ALLOWED_ANONYMOUS_SEND)
+		{
+			QMessageBox::warning(this, tr("Send Coins"),
+				tr("DeepSend only allows maximum of 100 ONIONs now. Please reduce send amount or use regular send."),
+				QMessageBox::Ok, QMessageBox::Ok);
+			fNewRecipientAllowed = true;
+			return;
+		}
+
+		// check if there are mixer/garantor available
+		if(!model->AreServiceNodesAvailable())
+		{
+			QMessageBox::warning(this, tr("Send Coins"),
+				tr("DeepSend requires at least 2 anonymous service nodes available. You don't have enough service nodes connected. Please use regular-send or try later."),
+				QMessageBox::Ok, QMessageBox::Ok);
+			fNewRecipientAllowed = true;
+			return;
+		}
+
+		// check if another DeepSend still waiting
+		if(model->IsAnotherDeepSendInProcess())
+		{
+			QMessageBox::warning(this, tr("Send Coins"),
+				tr("Another DeepSend transaction still in progress. Please wait it finishes before starting a new DeepSend."),
+				QMessageBox::Ok, QMessageBox::Ok);
+			fNewRecipientAllowed = true;
+			return;
+		}
+	}
 
     WalletModel::SendCoinsReturn sendstatus;
 
@@ -485,6 +540,19 @@ void SendCoinsDialog::coinControlChangeEdited(const QString & text)
         }
     }
 }
+
+// Anonymous Send: checkbox anonymous send
+void SendCoinsDialog::anonymousSendChecked(int state)
+{
+    if (model)
+    {
+        if (state == Qt::Checked)
+            CoinControlDialog::coinControl->SetAnonymousSend(true);
+        else
+            CoinControlDialog::coinControl->SetAnonymousSend(false);
+    }
+}
+
 
 // Coin Control: update labels
 void SendCoinsDialog::coinControlUpdateLabels()

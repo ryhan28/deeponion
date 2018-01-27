@@ -46,6 +46,10 @@
         <file alias="toolbar_testnet">res/icons/toolbar_testnet.png</file>
         <file alias="tor_active">res/icons/tor.png</file>
         <file alias="tor_inactive">res/icons/tor2.png</file>
+        <file alias="mixer_off">res/icons/mixer_off.png</file>
+        <file alias="mixer_process">res/icons/mixer_process.png</file>
+        <file alias="mixer_on">res/icons/mixer_on.png</file>        
+        <file alias="deepsend">res/icons/deepsend.png</file>
     </qresource>
     <qresource prefix="/images">
         <file alias="about_new">res/images/about.png</file>

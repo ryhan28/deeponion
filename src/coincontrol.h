@@ -16,6 +16,7 @@ public:
     {
         destChange = CNoDestination();
         setSelected.clear();
+		anonymousSend = false;
     }
     
     bool HasSelected() const
@@ -48,10 +49,20 @@ public:
     {
         vOutpoints.assign(setSelected.begin(), setSelected.end());
     }
+ 
+	void SetAnonymousSend(bool b)
+	{
+		anonymousSend = b;
+	}
+
+	bool GetAnonymousSend() const
+	{
+		return anonymousSend;
+	}
         
 private:
     std::set<COutPoint> setSelected;
-
+	bool anonymousSend;
 };
 
 #endif // COINCONTROL_H

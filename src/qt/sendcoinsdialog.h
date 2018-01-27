@@ -54,6 +54,7 @@ private slots:
     void coinControlButtonClicked();
     void coinControlChangeChecked(int);
     void coinControlChangeEdited(const QString &);
+	void anonymousSendChecked(int);
     void coinControlUpdateLabels();
     void coinControlClipboardQuantity();
     void coinControlClipboardAmount();

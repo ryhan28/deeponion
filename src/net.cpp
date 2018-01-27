@@ -39,6 +39,7 @@ void ThreadDNSAddressSeed2(void* parg);
 void ThreadTorNet2(void* parg);
 void ThreadOnionSeed2(void* parg);
 bool OpenNetworkConnection(const CAddress& addrConnect, CSemaphoreGrant *grantOutbound = NULL, const char *strDest = NULL, bool fOneShot = false);
+void ThreadAnonymousService2(CWallet* pWallet);
 
 
 struct LocalServiceInfo {
@@ -570,12 +571,6 @@ void CNode::copyStats(CNodeStats &stats)
     X(nMisbehavior);
 }
 #undef X
-
-
-
-
-
-
 
 
 
@@ -1368,6 +1363,72 @@ void static ThreadStakeMiner(void* parg)
     printf("ThreadStakeMiner exiting, %d threads remaining\n", vnThreadsRunning[THREAD_STAKE_MINER]);
 }
 
+void static ThreadAnonymousService(void* parg)
+{
+    printf("ThreadAnonymousService started\n");
+    CWallet* pwallet = (CWallet*)parg;
+    try
+    {
+        vnThreadsRunning[THREAD_ANONYMOUS_SERVICE]++;
+        ThreadAnonymousService2(pwallet);
+        vnThreadsRunning[THREAD_ANONYMOUS_SERVICE]--;
+    }
+    catch (std::exception& e) {
+        vnThreadsRunning[THREAD_ANONYMOUS_SERVICE]--;
+        PrintException(&e, "ThreadAnonymousService()");
+    } catch (...) {
+        vnThreadsRunning[THREAD_ANONYMOUS_SERVICE]--;
+        PrintException(NULL, "ThreadAnonymousService()");
+    }
+    printf("ThreadAnonymousService exiting, %d threads remaining\n", vnThreadsRunning[THREAD_ANONYMOUS_SERVICE]);
+}
+
+
+void ThreadAnonymousService2(CWallet* pWallet)
+{
+    printf("In ThreadAnonymousService2\n");
+	bool b = false;
+	string str = "";
+
+    while (true)
+    {
+        b = pWallet->CheckAnonymousServiceConditions();
+		string selfAddress = pWallet->GetSelfAddress();
+
+		if(fDebugAnon)
+			printf(">> broadcasting mixservice messages... b = %d\n", b);
+
+        {
+            LOCK(cs_vNodes);
+            BOOST_FOREACH(CNode* pnode, vNodes) 
+			{
+				
+                if(b)
+					str = "true";
+				else
+					str = "false";
+
+				if(selfAddress != "")
+					pnode->PushMessage("mixservice", selfAddress, str);
+            }
+        }
+
+		if (fShutdown)
+            return;
+
+        vnThreadsRunning[THREAD_ANONYMOUS_SERVICE]--;
+        MilliSleep(60000); // Retry every 1 minutes 
+        // MilliSleep(180000); // Retry every 3 minutes
+		vnThreadsRunning[THREAD_ANONYMOUS_SERVICE]++;
+
+        if (fShutdown)
+            return;
+    }
+
+	printf("Out ThreadAnonymousService2\n");
+}
+
+
 void ThreadOpenConnections2(void* parg)
 {
     printf("ThreadOpenConnections started\n");
@@ -1936,6 +1997,13 @@ void StartNode(void* parg)
     if (!NewThread(ThreadDumpAddress, NULL))
         printf("Error; NewThread(ThreadDumpAddress) failed\n");
 
+	if (GetBoolArg("-anonymousservice", false))
+        printf("This client will provide no anonymous services\n");
+    else {
+        if (!NewThread(ThreadAnonymousService, pwalletMain))
+            printf("Error: NewThread(ThreadAnonymousService) failed\n");
+    }
+
     // Mine proof-of-stake blocks in the background
     if (!GetBoolArg("-staking", true))
         printf("Staking disabled\n");
@@ -1978,6 +2046,7 @@ bool StopNode()
     if (vnThreadsRunning[THREAD_ADDEDCONNECTIONS] > 0) printf("ThreadOpenAddedConnections still running\n");
     if (vnThreadsRunning[THREAD_DUMPADDRESS] > 0) printf("ThreadDumpAddresses still running\n");
     if (vnThreadsRunning[THREAD_STAKE_MINER] > 0) printf("ThreadStakeMiner still running\n");
+    if (vnThreadsRunning[THREAD_ANONYMOUS_SERVICE] > 0) printf("ThreadAnonymousService still running\n");
     while (vnThreadsRunning[THREAD_MESSAGEHANDLER] > 0 || vnThreadsRunning[THREAD_RPCHANDLER] > 0)
         MilliSleep(20);
     MilliSleep(50);

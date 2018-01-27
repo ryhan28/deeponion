@@ -155,6 +155,7 @@ extern bool fTestNet;
 extern bool fNoListen;
 extern bool fLogTimestamps;
 extern bool fReopenDebugLog;
+extern bool fDebugAnon;
 
 void RandAddSeed();
 void RandAddSeedPerfmon();
@@ -233,12 +234,7 @@ std::string FormatFullVersion();
 std::string FormatSubVersion(const std::string& name, int nClientVersion, const std::vector<std::string>& comments);
 void AddTimeData(const CNetAddr& ip, int64_t nTime);
 void runCommand(std::string strCommand);
-
-
-
-
-
-
+const std::string currentDateTime();
 
 
 

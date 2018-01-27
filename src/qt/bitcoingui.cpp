@@ -183,7 +183,7 @@ BitcoinGUI::BitcoinGUI(QWidget *parent):
     signVerifyMessageDialog = new SignVerifyMessageDialog(this);
 
     centralWidget = new QStackedWidget(this);
-    centralWidget->addWidget(overviewPage);;	
+    centralWidget->addWidget(overviewPage);	
 	centralWidget->addWidget(messagePage);
     centralWidget->addWidget(transactionsPage);
     centralWidget->addWidget(addressBookPage);
@@ -202,11 +202,14 @@ BitcoinGUI::BitcoinGUI(QWidget *parent):
     QHBoxLayout *frameBlocksLayout = new QHBoxLayout(frameBlocks);
     frameBlocksLayout->setContentsMargins(3,0,3,0);
     frameBlocksLayout->setSpacing(3);
+    labelMixerIcon = new QLabel();
     labelEncryptionIcon = new QLabel();
     labelStakingIcon = new QLabel();
     labelConnectionsIcon = new QLabel();
 	labelOnionIcon = new QLabel();
     labelBlocksIcon = new QLabel();
+    frameBlocksLayout->addStretch();
+    frameBlocksLayout->addWidget(labelMixerIcon);
     frameBlocksLayout->addStretch();
     frameBlocksLayout->addWidget(labelEncryptionIcon);
     frameBlocksLayout->addStretch();
@@ -225,6 +228,14 @@ BitcoinGUI::BitcoinGUI(QWidget *parent):
         connect(timerStakingIcon, SIGNAL(timeout()), this, SLOT(updateStakingIcon()));
         timerStakingIcon->start(30 * 1000);
         updateStakingIcon();
+    }
+
+    if (GetBoolArg("-anonymous", true))
+    {
+        QTimer *timerMixerIcon = new QTimer(labelMixerIcon);
+        connect(timerMixerIcon, SIGNAL(timeout()), this, SLOT(updateMixerIcon()));
+        timerMixerIcon->start(30 * 1000);
+        updateMixerIcon();
     }
 
 	if (fTorEnabled == 1)
@@ -253,7 +264,7 @@ BitcoinGUI::BitcoinGUI(QWidget *parent):
 
     progressBar->setStyleSheet("color: white; background-color: #1b202f; border-color: #313c62;");
     progressBarLabel->setStyleSheet("color: white; background-color: #1b202f; border-color: #313c62;");
-    
+
     statusBar()->addWidget(progressBarLabel);
     statusBar()->addWidget(progressBar);
     statusBar()->addPermanentWidget(frameBlocks);
@@ -1114,6 +1125,39 @@ void BitcoinGUI::updateStakingIcon()
             labelStakingIcon->setToolTip(tr("Not staking"));
     }
 }
+
+
+void BitcoinGUI::updateMixerIcon()
+{
+	bool b = false;
+	int cnt = 0;
+    if(pwalletMain)
+	{
+		cnt = pwalletMain->GetUpdatedServiceListCount();
+        if(cnt > 1)
+			b = true;
+	}
+
+	if(b)
+	{
+		if(pwalletMain->IsCurrentAnonymousTxInProcess())
+		{
+			labelMixerIcon->setPixmap(QIcon(":/icons/mixer_process").pixmap(STATUSBAR_ICONSIZE,STATUSBAR_ICONSIZE));
+			labelMixerIcon->setToolTip(tr("Anonymous DeepSend Currently Processing"));
+		}
+		else
+		{
+			labelMixerIcon->setPixmap(QIcon(":/icons/mixer_on").pixmap(STATUSBAR_ICONSIZE,STATUSBAR_ICONSIZE));
+			labelMixerIcon->setToolTip(tr("Anonymous DeepSend Available. %1 Anonymous Service Nodes Available").arg(cnt));
+		}
+    }
+    else
+    {
+        labelMixerIcon->setPixmap(QIcon(":/icons/mixer_off").pixmap(STATUSBAR_ICONSIZE,STATUSBAR_ICONSIZE));
+		labelMixerIcon->setToolTip(tr("DeepSend Not Available - You Do Not Have Enough Service Nodes Connected"));
+    }
+}
+
 
 void BitcoinGUI::updateOnionIcon()
 {
