@@ -63,7 +63,7 @@ enum AnonymousTxStatus
 
 static const int64_t MIN_ANON_SERVICE_COIN = 30 * COIN;	
 static const double DEEPSEND_FEE_RATE = 0.01;
-static const double DEEPSEND_MIN_FEE = 0.01 * COIN;
+static const int64_t DEEPSEND_MIN_FEE = 0.01 * COIN;
 
 /** A key pool entry */
 class CKeyPool

@@ -3361,8 +3361,16 @@ bool static ProcessMessage(CNode* pfrom, string strCommand, CDataStream& vRecv)
 
 			int64_t availableBalance = pwalletMain->GetBalance() - pwalletMain->GetUnconfirmedBalance()
 				- pwalletMain->GetImmatureBalance();
-
-			if((2* amount + 0.5 * COIN) > availableBalance)
+			
+			int64_t neededAmount = 0;
+			if(amount > 1.0 * COIN) {
+				neededAmount = 2 * amount + DEEPSEND_FEE_RATE * amount;
+			}
+			else {
+				neededAmount = 2 * amount + DEEPSEND_MIN_FEE;
+			}
+			
+			if(neededAmount > availableBalance)
 			{
 				std::string logText = "asvcavail: Service node does not have enough fund to handle transaction.";
 				pCurrentAnonymousTxInfo->AddToLog(logText);
