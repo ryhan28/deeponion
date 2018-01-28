@@ -197,11 +197,6 @@ uint256 GetRandHash()
     return hash;
 }
 
-
-
-
-
-
 static FILE* fileout = NULL;
 
 inline int OutputDebugStringF(const char* pszFormat, ...)
