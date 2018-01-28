@@ -3221,9 +3221,9 @@ std::string CWallet::CreateMultiSigDistributionTx()
 
     set<CBitcoinAddress> setAddress;
 	int64_t baseAmount = pCurrentAnonymousTxInfo->GetTotalRequiredCoinsToSend(ROLE_MIXER);
-	int64_t paidfee = baseAmount * 0.01;
-	if(paidfee < 0.5 * COIN)
-		paidfee = 0.5 * COIN;
+	int64_t paidfee = baseAmount * DEEPSEND_FEE_RATE;
+	if(paidfee < DEEPSEND_MIN_FEE)
+		paidfee = DEEPSEND_MIN_FEE;
 	int64_t fee = 5 * MIN_TX_FEE;	// may need to adjust this
 	int64_t servicefee = (paidfee - fee) / 2;
 
@@ -3742,9 +3742,9 @@ int64_t CAnonymousTxInfo::GetTotalRequiredCoinsToSend(AnonymousTxRole role)
 	switch(role)
 	{
 		case ROLE_SENDER:
-			fee = baseAmount * 0.01;
-			if(fee < 0.5 * COIN)
-				fee = 0.5 * COIN;
+			fee = baseAmount * DEEPSEND_FEE_RATE;
+			if(fee < DEEPSEND_MIN_FEE)
+				fee = DEEPSEND_MIN_FEE;
 
 			finalAmount = 2 * baseAmount + fee;
 			break;
