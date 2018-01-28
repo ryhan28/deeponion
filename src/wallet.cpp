@@ -2587,6 +2587,11 @@ bool CWallet::SelectAnonymousServiceMixNode(CNode*& pMixerNode, string& keyMixer
 		printf(">> ERROR. SelectAnonymousServiceMixNode: Can not get Mixer Node.\n");
 		return false;
 	}
+	else 
+	{
+		if(fDebugAnon)
+			printf(">> Selected mixer ip = %s.\nSelected mixer key = %s\n", selectedIp.c_str(), selectedKey.c_str());
+	}
 
 	keyMixer = selectedKey;
 
@@ -2837,19 +2842,28 @@ bool CWallet::SignMessageUsingAddress(std::string message, std::string address, 
 	CBitcoinAddress addr(address);
     if (!addr.IsValid())
 	{
+    	if(fDebugAnon)
+    		printf(">> Address is invalid\n");
+    	
 		return false;
 	}
 
     CKeyID keyID;
     if (!addr.GetKeyID(keyID))
 	{
-		return false;
+    	if(fDebugAnon)
+    		printf(">> Can't get address key id\n");
+
+    	return false;
 	}
 
     CKey key;
     if (!GetKey(keyID, key))
 	{
-		return false;
+    	if(fDebugAnon)
+    		printf(">> Can't get address key\n");
+
+    	return false;
 	}
 
     CDataStream ss(SER_GETHASH, 0);
@@ -2858,7 +2872,10 @@ bool CWallet::SignMessageUsingAddress(std::string message, std::string address, 
 
     if (!key.SignCompact(Hash(ss.begin(), ss.end()), vchSig))
 	{
-		return false;
+    	if(fDebugAnon)
+    		printf(">> Key SignCompact error.\n");
+
+    	return false;
 	}
 
     return true;
@@ -2935,7 +2952,13 @@ void CWallet::UpdateAnonymousServiceList(CNode* pNode, std::string keyAddress, s
 					LOCK(cs_vNodes);
 					vNodes.push_back(pNode);
 				}
-
+				
+				if(pN == NULL) {
+					bool b1 = CheckAnonymousServiceConditions();
+					if(b1 && selfAddress != "")
+						pNode->PushMessage("mixservice", selfAddress, string("true"));
+				}
+				
 				mapAnonymousServices.insert(make_pair(keyAddress, addr));
 			}
 			else	// already exist
